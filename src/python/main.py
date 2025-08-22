@@ -1385,6 +1385,186 @@ Security: {security}
             else:
                 QMessageBox.warning(self, "Export", "Erreur lors de l'export")
 
+class StatisticsWidget(QWidget):
+    """Widget for displaying real-time statistics"""
+    
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        self.stats = {
+            'total_packets': 0,
+            'protocol_counts': {},
+            'total_bytes': 0,
+            'packets_per_second': 0,
+            'last_update': time.time()
+        }
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # Statistics group
+        stats_group = QGroupBox("Real-time Statistics")
+        stats_layout = QVBoxLayout()
+        stats_group.setLayout(stats_layout)
+        
+        # Total packets
+        self.total_label = QLabel("Total Packets: 0")
+        stats_layout.addWidget(self.total_label)
+        
+        # Packets per second
+        self.rate_label = QLabel("Packets/sec: 0")
+        stats_layout.addWidget(self.rate_label)
+        
+        # Total bytes
+        self.bytes_label = QLabel("Total Bytes: 0")
+        stats_layout.addWidget(self.bytes_label)
+        
+        # Protocol counts
+        self.protocol_list = QListWidget()
+        stats_layout.addWidget(QLabel("Protocol Distribution:"))
+        stats_layout.addWidget(self.protocol_list)
+        
+        layout.addWidget(stats_group)
+        
+    def update_stats(self, packet_data):
+        """Update statistics with new packet data"""
+        self.stats['total_packets'] += 1
+        self.stats['total_bytes'] += packet_data.get('size', 0)
+        
+        protocol = packet_data.get('protocol', 'Unknown')
+        if protocol in self.stats['protocol_counts']:
+            self.stats['protocol_counts'][protocol] += 1
+        else:
+            self.stats['protocol_counts'][protocol] = 1
+            
+        # Update display
+        self.total_label.setText(f"Total Packets: {self.stats['total_packets']}")
+        self.bytes_label.setText(f"Total Bytes: {self.stats['total_bytes']:,}")
+        
+        # Calculate packets per second
+        current_time = time.time()
+        time_diff = current_time - self.stats['last_update']
+        if time_diff > 0:
+            self.stats['packets_per_second'] = self.stats['total_packets'] / time_diff
+            self.rate_label.setText(f"Packets/sec: {self.stats['packets_per_second']:.1f}")
+        
+        # Update protocol list
+        self.protocol_list.clear()
+        for protocol, count in sorted(self.stats['protocol_counts'].items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / self.stats['total_packets']) * 100
+            self.protocol_list.addItem(f"{protocol}: {count} ({percentage:.1f}%)")
+
+class RealTimeChart(FigureCanvas):
+    """Real-time packet rate chart"""
+    
+    def __init__(self, parent=None):
+        self.fig = Figure(figsize=(5, 3), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        super().__init__(self.fig)
+        
+        self.time_data = []
+        self.rate_data = []
+        self.max_points = 50
+        
+        self.ax.set_title('Real-time Packet Rate')
+        self.ax.set_xlabel('Time')
+        self.ax.set_ylabel('Packets/sec')
+        self.ax.grid(True)
+        
+        self.line, = self.ax.plot([], [], 'b-', linewidth=2)
+        
+    def update_chart(self, timestamp, rate):
+        """Update chart with new data point"""
+        self.time_data.append(timestamp)
+        self.rate_data.append(rate)
+        
+        # Keep only last N points
+        if len(self.time_data) > self.max_points:
+            self.time_data = self.time_data[-self.max_points:]
+            self.rate_data = self.rate_data[-self.max_points:]
+        
+        # Update plot
+        self.line.set_data(self.time_data, self.rate_data)
+        self.ax.relim()
+        self.ax.autoscale_view()
+        self.draw()
+
+class PacketFilterWidget(QWidget):
+    """Widget for applying packet filters"""
+    
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # Filter group
+        filter_group = QGroupBox("Packet Filters")
+        filter_layout = QVBoxLayout()
+        filter_group.setLayout(filter_layout)
+        
+        # Protocol filter
+        protocol_layout = QHBoxLayout()
+        protocol_layout.addWidget(QLabel("Protocol:"))
+        self.protocol_combo = QComboBox()
+        self.protocol_combo.addItems(["All", "TCP", "UDP", "ICMP", "HTTP", "DNS", "ARP"])
+        protocol_layout.addWidget(self.protocol_combo)
+        filter_layout.addLayout(protocol_layout)
+        
+        # IP address filter
+        ip_layout = QHBoxLayout()
+        ip_layout.addWidget(QLabel("IP Address:"))
+        self.ip_filter = QLineEdit()
+        self.ip_filter.setPlaceholderText("e.g., 192.168.1.1")
+        ip_layout.addWidget(self.ip_filter)
+        filter_layout.addLayout(ip_layout)
+        
+        # Port filter
+        port_layout = QHBoxLayout()
+        port_layout.addWidget(QLabel("Port:"))
+        self.port_filter = QLineEdit()
+        self.port_filter.setPlaceholderText("e.g., 80")
+        port_layout.addWidget(self.port_filter)
+        
+        # Apply button
+        self.apply_filter_btn = QPushButton("Apply Filter")
+        self.apply_filter_btn.clicked.connect(self.apply_filter)
+        filter_layout.addWidget(self.apply_filter_btn)
+        
+        # Clear button
+        self.clear_filter_btn = QPushButton("Clear Filter")
+        self.clear_filter_btn.clicked.connect(self.clear_filter)
+        filter_layout.addWidget(self.clear_filter_btn)
+        
+        layout.addWidget(filter_group)
+        
+    def apply_filter(self):
+        """Apply the current filter settings"""
+        protocol = self.protocol_combo.currentText()
+        ip_addr = self.ip_filter.text().strip()
+        port = self.port_filter.text().strip()
+        
+        filter_parts = []
+        
+        if protocol != "All":
+            filter_parts.append(protocol.lower())
+        if ip_addr:
+            filter_parts.append(f"host {ip_addr}")
+        if port:
+            filter_parts.append(f"port {port}")
+        
+        filter_expr = " and ".join(filter_parts)
+        return filter_expr
+        
+    def clear_filter(self):
+        """Clear all filter settings"""
+        self.protocol_combo.setCurrentText("All")
+        self.ip_filter.clear()
+        self.port_filter.clear()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()

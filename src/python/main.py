@@ -622,13 +622,13 @@ class MainWindow(QMainWindow):
             
             if self.interface_combo.count() > 0:
                 self.interface_combo.setCurrentIndex(0)
-                self.status_bar.showMessage(f"Found {self.interface_combo.count()} network interfaces")
-            else:
-                self.status_bar.showMessage("No network interfaces found")
+                self.statusBar().showMessage(f"Found {self.interface_combo.count()} network interfaces")
+    else:
+        self.statusBar().showMessage("No network interfaces found")
                 
         except Exception as e:
             self.logger.error(f"Error refreshing interfaces: {e}")
-            self.status_bar.showMessage("Error detecting network interfaces")
+            self.statusBar().showMessage("Error detecting network interfaces")
     
     def init_menu_bar(self):
         menubar = self.menuBar()

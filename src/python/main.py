@@ -571,10 +571,20 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.tabs)
         
         # Initialize tabs
+        self.packet_tab = QWidget()
+        self.network_tab = QWidget()
+        self.dashboard_tab = QWidget()
+        self.config_tab = QWidget()
+        
         self.init_packet_tab()
         self.init_network_tab()
         self.init_dashboard_tab()
         self.init_config_tab()
+        
+        self.tabs.addTab(self.packet_tab, "Packets")
+        self.tabs.addTab(self.network_tab, "Networks")
+        self.tabs.addTab(self.dashboard_tab, "Dashboard")
+        self.tabs.addTab(self.config_tab, "Configuration")
         
         # Add panels to splitter
         main_splitter.addWidget(left_panel)
@@ -673,6 +683,76 @@ class MainWindow(QMainWindow):
     def init_packet_tab(self):
         layout = QVBoxLayout()
         self.packet_tab.setLayout(layout)
+        
+        # Create splitter for packet view
+        packet_splitter = QSplitter(Qt.Vertical)
+        
+        # Top section - Packet list
+        packet_list_group = QGroupBox("Captured Packets")
+        packet_list_layout = QVBoxLayout()
+        packet_list_group.setLayout(packet_list_layout)
+        
+        # Packet table with enhanced columns
+        self.packet_table = QTableWidget()
+        self.packet_table.setColumnCount(8)
+        self.packet_table.setHorizontalHeaderLabels([
+            "No.", "Time", "Source", "Destination", "Protocol", 
+            "Length", "Source Port", "Dest Port"
+        ])
+        self.packet_table.setAlternatingRowColors(True)
+        self.packet_table.setSortingEnabled(True)
+        self.packet_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.packet_table.itemSelectionChanged.connect(self.display_packet_details)
+        
+        # Set column widths
+        self.packet_table.setColumnWidth(0, 50)   # No.
+        self.packet_table.setColumnWidth(1, 100)  # Time
+        self.packet_table.setColumnWidth(2, 150)  # Source
+        self.packet_table.setColumnWidth(3, 150)  # Destination
+        self.packet_table.setColumnWidth(4, 80)   # Protocol
+        self.packet_table.setColumnWidth(5, 70)   # Length
+        self.packet_table.setColumnWidth(6, 80)   # Source Port
+        self.packet_table.setColumnWidth(7, 80)   # Dest Port
+        
+        packet_list_layout.addWidget(self.packet_table)
+        
+        # Bottom section - Packet details
+        details_group = QGroupBox("Packet Details")
+        details_layout = QVBoxLayout()
+        details_group.setLayout(details_layout)
+        
+        # Create tab widget for packet details
+        self.packet_details_tabs = QTabWidget()
+        
+        # Packet summary tab
+        self.summary_text = QTextEdit()
+        self.summary_text.setReadOnly(True)
+        self.packet_details_tabs.addTab(self.summary_text, "Summary")
+        
+        # Protocol tree tab
+        self.protocol_tree = QTreeWidget()
+        self.protocol_tree.setHeaderLabels(["Field", "Value"])
+        self.packet_details_tabs.addTab(self.protocol_tree, "Protocol Tree")
+        
+        # Hex view tab
+        self.hex_view = QTextEdit()
+        self.hex_view.setReadOnly(True)
+        self.hex_view.setFont(QFont("Courier", 9))
+        self.packet_details_tabs.addTab(self.hex_view, "Hex View")
+        
+        # Raw data tab
+        self.raw_text = QTextEdit()
+        self.raw_text.setReadOnly(True)
+        self.raw_text.setFont(QFont("Courier", 9))
+        self.packet_details_tabs.addTab(self.raw_text, "Raw Data")
+        
+        details_layout.addWidget(self.packet_details_tabs)
+        
+        packet_splitter.addWidget(packet_list_group)
+        packet_splitter.addWidget(details_group)
+        packet_splitter.setSizes([400, 300])
+        
+        layout.addWidget(packet_splitter)
 
     def display_packet_details(self):
         """Display detailed information about the selected packet"""

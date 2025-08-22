@@ -594,8 +594,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(main_splitter)
         
         # Status bar
-        self.status_bar = self.statusBar()
-        self.status_bar.showMessage("Ready - Select an interface and start capture")
+        self.statusBar().showMessage("Ready - Select an interface and start capture")
         
         # Timer for real-time updates
         self.update_timer = QTimer()
@@ -615,19 +614,22 @@ class MainWindow(QMainWindow):
             self.interface_combo.clear()
             interfaces = psutil.net_if_addrs()
             
-            for interface_name in interfaces.keys():
-                # Skip loopback interface
-                if interface_name.lower() != 'lo' and not interface_name.startswith('Loopback'):
-                    self.interface_combo.addItem(interface_name)
+            # Filter out loopback interfaces
+            valid_interfaces = [
+                name for name in interfaces.keys()
+                if name.lower() != 'lo' and not name.startswith('Loopback')
+            ]
             
-            if self.interface_combo.count() > 0:
-                self.interface_combo.setCurrentIndex(0)
-                self.statusBar().showMessage(f"Found {self.interface_combo.count()} network interfaces")
-        if not interfaces:
-        self.statusBar().showMessage("No network interfaces found")
-                
-        try:
-            pass
+            if not valid_interfaces:
+                self.statusBar().showMessage("No network interfaces found")
+                return
+            
+            for interface_name in valid_interfaces:
+                self.interface_combo.addItem(interface_name)
+            
+            self.interface_combo.setCurrentIndex(0)
+            self.statusBar().showMessage(f"Found {len(valid_interfaces)} network interfaces")
+            
         except Exception as e:
             self.logger.error(f"Error refreshing interfaces: {e}")
             self.statusBar().showMessage("Error detecting network interfaces")

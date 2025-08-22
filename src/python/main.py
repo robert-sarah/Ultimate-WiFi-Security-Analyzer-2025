@@ -609,6 +609,27 @@ class MainWindow(QMainWindow):
         self.capture_start_time = None
         self.is_capturing = False
     
+    def refresh_interfaces(self):
+        """Refresh the list of available network interfaces"""
+        try:
+            self.interface_combo.clear()
+            interfaces = psutil.net_if_addrs()
+            
+            for interface_name in interfaces.keys():
+                # Skip loopback interface
+                if interface_name.lower() != 'lo' and not interface_name.startswith('Loopback'):
+                    self.interface_combo.addItem(interface_name)
+            
+            if self.interface_combo.count() > 0:
+                self.interface_combo.setCurrentIndex(0)
+                self.status_bar.showMessage(f"Found {self.interface_combo.count()} network interfaces")
+            else:
+                self.status_bar.showMessage("No network interfaces found")
+                
+        except Exception as e:
+            self.logger.error(f"Error refreshing interfaces: {e}")
+            self.status_bar.showMessage("Error detecting network interfaces")
+    
     def init_menu_bar(self):
         menubar = self.menuBar()
         

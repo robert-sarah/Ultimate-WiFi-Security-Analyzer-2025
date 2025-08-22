@@ -623,9 +623,11 @@ class MainWindow(QMainWindow):
             if self.interface_combo.count() > 0:
                 self.interface_combo.setCurrentIndex(0)
                 self.statusBar().showMessage(f"Found {self.interface_combo.count()} network interfaces")
-    else:
+        if not interfaces:
         self.statusBar().showMessage("No network interfaces found")
                 
+        try:
+            pass
         except Exception as e:
             self.logger.error(f"Error refreshing interfaces: {e}")
             self.statusBar().showMessage("Error detecting network interfaces")

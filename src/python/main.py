@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Ultimate Professional WiFi Analysis and Security Testing Platform
+Wireshark-like Network Analysis Suite with Real-time Deep Packet Inspection
 Advanced multi-OS penetration testing suite with AI-powered analysis
 """
 
@@ -13,8 +14,13 @@ import subprocess
 import platform
 import psutil
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+import queue
+import logging
+import ipaddress
+import struct
+import socket
 
 # Advanced PyQt5 imports
 from PyQt5.QtWidgets import *
@@ -26,6 +32,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.patches as patches
 
 # Network and security imports
 import socket
@@ -35,10 +43,165 @@ import queue
 import hashlib
 import hmac
 import binascii
+import re
+
+# Advanced network analysis
+try:
+    import scapy.all as scapy
+    from scapy.layers import http, dns, dhcp, l2, inet
+    SCAPY_AVAILABLE = True
+except ImportError:
+    SCAPY_AVAILABLE = False
 
 # C++ integration
 import ctypes
 import platform
+
+class PacketCaptureThread(QThread):
+    packet_captured = pyqtSignal(dict)
+    capture_stopped = pyqtSignal()
+    
+    def __init__(self, interface=None, filter_expr=""):
+        super().__init__()
+        self.interface = interface
+        self.filter_expr = filter_expr
+        self.running = False
+        self.packet_queue = queue.Queue()
+        
+    def run(self):
+        if not SCAPY_AVAILABLE:
+            self.packet_captured.emit({"error": "Scapy not available for packet capture"})
+            return
+            
+        try:
+            self.running = True
+            
+            # Get available interfaces
+            if not self.interface:
+                interfaces = scapy.get_if_list()
+                self.interface = interfaces[0] if interfaces else None
+            
+            if not self.interface:
+                self.packet_captured.emit({"error": "No network interface available"})
+                return
+                
+            # Start packet capture
+            scapy.sniff(
+                iface=self.interface,
+                filter=self.filter_expr if self.filter_expr else None,
+                prn=self.process_packet,
+                stop_filter=lambda x: not self.running
+            )
+            
+        except Exception as e:
+            self.packet_captured.emit({"error": f"Capture error: {str(e)}"})
+        finally:
+            self.capture_stopped.emit()
+    
+    def process_packet(self, packet):
+        try:
+            packet_data = self.analyze_packet(packet)
+            self.packet_captured.emit(packet_data)
+        except Exception as e:
+            logging.error(f"Error processing packet: {e}")
+    
+    def analyze_packet(self, packet):
+        packet_info = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "size": len(packet),
+            "protocol": "Unknown",
+            "src_ip": "",
+            "dst_ip": "",
+            "src_mac": "",
+            "dst_mac": "",
+            "port_src": "",
+            "port_dst": "",
+            "flags": [],
+            "payload": "",
+            "raw_hex": bytes(packet).hex()[:200] + "..." if len(bytes(packet)) > 200 else bytes(packet).hex()
+        }
+        
+        # Ethernet layer
+        if packet.haslayer(scapy.Ether):
+            packet_info["src_mac"] = packet[scapy.Ether].src
+            packet_info["dst_mac"] = packet[scapy.Ether].dst
+        
+        # IP layer
+        if packet.haslayer(scapy.IP):
+            packet_info["src_ip"] = packet[scapy.IP].src
+            packet_info["dst_ip"] = packet[scapy.IP].dst
+            packet_info["protocol"] = "IP"
+            
+            # TCP
+            if packet.haslayer(scapy.TCP):
+                packet_info["protocol"] = "TCP"
+                packet_info["port_src"] = str(packet[scapy.TCP].sport)
+                packet_info["port_dst"] = str(packet[scapy.TCP].dport)
+                packet_info["flags"] = self.get_tcp_flags(packet[scapy.TCP].flags)
+                
+            # UDP
+            elif packet.haslayer(scapy.UDP):
+                packet_info["protocol"] = "UDP"
+                packet_info["port_src"] = str(packet[scapy.UDP].sport)
+                packet_info["port_dst"] = str(packet[scapy.UDP].dport)
+                
+            # ICMP
+            elif packet.haslayer(scapy.ICMP):
+                packet_info["protocol"] = "ICMP"
+                
+        # ARP
+        elif packet.haslayer(scapy.ARP):
+            packet_info["protocol"] = "ARP"
+            packet_info["src_ip"] = packet[scapy.ARP].psrc
+            packet_info["dst_ip"] = packet[scapy.ARP].pdst
+            
+        # HTTP
+        if packet.haslayer(http.HTTPRequest):
+            packet_info["protocol"] = "HTTP"
+            packet_info["http_method"] = packet[http.HTTPRequest].Method.decode()
+            packet_info["http_host"] = packet[http.HTTPRequest].Host.decode()
+            packet_info["http_path"] = packet[http.HTTPRequest].Path.decode()
+            
+        elif packet.haslayer(http.HTTPResponse):
+            packet_info["protocol"] = "HTTP"
+            packet_info["http_status"] = packet[http.HTTPResponse].Status_Code
+            
+        # DNS
+        if packet.haslayer(dns.DNS):
+            packet_info["protocol"] = "DNS"
+            if packet[dns.DNS].qd:
+                packet_info["dns_query"] = packet[dns.DNS].qd.qname.decode()
+                
+        # Extract payload
+        if packet.haslayer(scapy.Raw):
+            raw_data = packet[scapy.Raw].load
+            try:
+                packet_info["payload"] = raw_data.decode('utf-8', errors='ignore')[:100] + "..." if len(raw_data) > 100 else raw_data.decode('utf-8', errors='ignore')
+            except:
+                packet_info["payload"] = raw_data.hex()[:100] + "..." if len(raw_data) > 100 else raw_data.hex()
+        
+        return packet_info
+    
+    def get_tcp_flags(self, flags):
+        flag_names = {
+            0x01: "FIN",
+            0x02: "SYN", 
+            0x04: "RST",
+            0x08: "PSH",
+            0x10: "ACK",
+            0x20: "URG",
+            0x40: "ECE",
+            0x80: "CWR"
+        }
+        
+        active_flags = []
+        for flag_value, flag_name in flag_names.items():
+            if flags & flag_value:
+                active_flags.append(flag_name)
+        return active_flags
+    
+    def stop_capture(self):
+        self.running = False
 
 class WiFiScanThread(QThread):
     scan_complete = pyqtSignal(list)

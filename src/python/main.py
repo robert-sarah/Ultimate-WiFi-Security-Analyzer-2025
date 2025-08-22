@@ -670,7 +670,7 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_data)
         toolbar.addAction(export_action)
     
-    def initPacketTab(self):
+    def init_packet_tab(self):
         layout = QVBoxLayout()
         self.packet_tab.setLayout(layout)
 
@@ -1140,7 +1140,7 @@ Security: {security}
         
         layout.addWidget(splitter)
     
-    def initConfigTab(self):
+    def init_config_tab(self):
         layout = QVBoxLayout()
         self.config_tab.setLayout(layout)
         

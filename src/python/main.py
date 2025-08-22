@@ -532,6 +532,13 @@ class MainWindow(QMainWindow):
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_realtime_display)
         self.update_timer.start(1000)  # Update every second
+        
+        # Initialize capture variables
+        self.captured_packets = []
+        self.packet_count = 0
+        self.capture_thread = None
+        self.capture_start_time = None
+        self.is_capturing = False
     
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -604,9 +611,211 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self.export_data)
         toolbar.addAction(export_action)
     
-    def init_packet_tab(self):
+    def initPacketTab(self):
         layout = QVBoxLayout()
         self.packet_tab.setLayout(layout)
+
+    def display_packet_details(self):
+        """Display detailed information about the selected packet"""
+        current_row = self.packet_table.currentRow()
+        if current_row < 0 or current_row >= len(self.captured_packets):
+            return
+            
+        packet = self.captured_packets[current_row]
+        
+        # Update summary
+        summary = f"""Frame {current_row + 1}: {len(packet)} bytes on wire
+Arrival Time: {packet.time}
+Frame Length: {len(packet)} bytes
+Capture Length: {len(packet)} bytes
+"""
+        self.summary_text.setText(summary)
+        
+        # Update protocol tree
+        self.protocol_tree.clear()
+        self.populate_protocol_tree(packet)
+        
+        # Update hex view
+        self.update_hex_view(packet)
+        
+        # Update raw data
+        self.raw_text.setText(str(packet))
+
+    def populate_protocol_tree(self, packet):
+        """Populate the protocol tree with packet details"""
+        # Frame layer
+        frame_item = QTreeWidgetItem(self.protocol_tree)
+        frame_item.setText(0, "Frame")
+        frame_item.setText(1, f"{len(packet)} bytes")
+        
+        frame_len = QTreeWidgetItem(frame_item)
+        frame_len.setText(0, "Frame Length")
+        frame_len.setText(1, str(len(packet)))
+        
+        # Ethernet layer
+        if packet.haslayer(Ether):
+            ether = packet[Ether]
+            ether_item = QTreeWidgetItem(self.protocol_tree)
+            ether_item.setText(0, "Ethernet")
+            ether_item.setText(1, f"{ether.src} → {ether.dst}")
+            
+            src_item = QTreeWidgetItem(ether_item)
+            src_item.setText(0, "Source")
+            src_item.setText(1, ether.src)
+            
+            dst_item = QTreeWidgetItem(ether_item)
+            dst_item.setText(0, "Destination")
+            dst_item.setText(1, ether.dst)
+            
+            type_item = QTreeWidgetItem(ether_item)
+            type_item.setText(0, "Type")
+            type_item.setText(1, hex(ether.type))
+        
+        # IP layer
+        if packet.haslayer(IP):
+            ip = packet[IP]
+            ip_item = QTreeWidgetItem(self.protocol_tree)
+            ip_item.setText(0, "Internet Protocol")
+            ip_item.setText(1, f"{ip.src} → {ip.dst}")
+            
+            version_item = QTreeWidgetItem(ip_item)
+            version_item.setText(0, "Version")
+            version_item.setText(1, str(ip.version))
+            
+            header_len = QTreeWidgetItem(ip_item)
+            header_len.setText(0, "Header Length")
+            header_len.setText(1, f"{ip.ihl * 4} bytes")
+            
+            ttl_item = QTreeWidgetItem(ip_item)
+            ttl_item.setText(0, "TTL")
+            ttl_item.setText(1, str(ip.ttl))
+            
+            protocol_item = QTreeWidgetItem(ip_item)
+            protocol_item.setText(0, "Protocol")
+            protocol_item.setText(1, str(ip.proto))
+            
+            flags_item = QTreeWidgetItem(ip_item)
+            flags_item.setText(0, "Flags")
+            flags_item.setText(1, str(ip.flags))
+        
+        # TCP layer
+        if packet.haslayer(TCP):
+            tcp = packet[TCP]
+            tcp_item = QTreeWidgetItem(self.protocol_tree)
+            tcp_item.setText(0, "Transmission Control Protocol")
+            tcp_item.setText(1, f"{tcp.sport} → {tcp.dport}")
+            
+            seq_item = QTreeWidgetItem(tcp_item)
+            seq_item.setText(0, "Sequence Number")
+            seq_item.setText(1, str(tcp.seq))
+            
+            ack_item = QTreeWidgetItem(tcp_item)
+            ack_item.setText(0, "Acknowledgment Number")
+            ack_item.setText(1, str(tcp.ack))
+            
+            flags_item = QTreeWidgetItem(tcp_item)
+            flags_item.setText(0, "Flags")
+            flags_item.setText(1, str(tcp.flags))
+            
+            window_item = QTreeWidgetItem(tcp_item)
+            window_item.setText(0, "Window Size")
+            window_item.setText(1, str(tcp.window))
+        
+        # UDP layer
+        if packet.haslayer(UDP):
+            udp = packet[UDP]
+            udp_item = QTreeWidgetItem(self.protocol_tree)
+            udp_item.setText(0, "User Datagram Protocol")
+            udp_item.setText(1, f"{udp.sport} → {udp.dport}")
+            
+            length_item = QTreeWidgetItem(udp_item)
+            length_item.setText(0, "Length")
+            length_item.setText(1, str(udp.len))
+            
+            checksum_item = QTreeWidgetItem(udp_item)
+            checksum_item.setText(0, "Checksum")
+            checksum_item.setText(1, hex(udp.chksum))
+
+    def update_hex_view(self, packet):
+        """Update the hex view with packet data"""
+        raw_data = bytes(packet)
+        hex_lines = []
+        
+        for i in range(0, len(raw_data), 16):
+            chunk = raw_data[i:i+16]
+            hex_bytes = ' '.join(f'{b:02x}' for b in chunk)
+            hex_bytes = hex_bytes.ljust(47)  # Pad to 16 bytes
+            
+            ascii_chars = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
+            
+            offset = f'{i:08x}'
+            hex_lines.append(f'{offset}  {hex_bytes}  {ascii_chars}')
+        
+        self.hex_view.setText('\n'.join(hex_lines))
+
+    def display_network_details(self):
+        """Display details about the selected network"""
+        current_row = self.networks_table.currentRow()
+        if current_row < 0:
+            return
+            
+        # This would typically display detailed network information
+        # For now, we'll show basic info
+        ssid = self.networks_table.item(current_row, 0).text()
+        bssid = self.networks_table.item(current_row, 1).text()
+        channel = self.networks_table.item(current_row, 2).text()
+        signal = self.networks_table.item(current_row, 3).text()
+        security = self.networks_table.item(current_row, 4).text()
+        
+        details = f"""Network Details:
+SSID: {ssid}
+BSSID: {bssid}
+Channel: {channel}
+Signal Strength: {signal}
+Security: {security}
+"""
+        
+        # Could add more detailed analysis here
+        QMessageBox.information(self, "Network Details", details)
+
+    def clear_display(self):
+        """Clear all displayed data"""
+        self.packet_table.setRowCount(0)
+        self.captured_packets.clear()
+        self.packet_count = 0
+        
+        # Clear details
+        self.summary_text.clear()
+        self.protocol_tree.clear()
+        self.hex_view.clear()
+        self.raw_text.clear()
+        
+        # Update stats
+        self.update_statistics()
+
+    def update_statistics(self):
+        """Update dashboard statistics"""
+        total_packets = len(self.captured_packets)
+        self.total_packets_label.setText(f"Total Packets: {total_packets}")
+        
+        if total_packets > 0:
+            total_bytes = sum(len(p) for p in self.captured_packets)
+            avg_size = total_bytes // total_packets
+            self.avg_packet_size_label.setText(f"Avg Size: {avg_size} bytes")
+            
+            # Calculate packet rate (simplified)
+            if self.capture_start_time:
+                duration = time.time() - self.capture_start_time
+                if duration > 0:
+                    rate = total_packets / duration
+                    self.packet_rate_label.setText(f"Rate: {rate:.1f} pps")
+                    self.capture_duration_label.setText(
+                        f"Duration: {int(duration//3600):02d}:{int((duration%3600)//60):02d}:{int(duration%60):02d}"
+                    )
+        else:
+            self.avg_packet_size_label.setText("Avg Size: 0 bytes")
+            self.packet_rate_label.setText("Rate: 0 pps")
+            self.capture_duration_label.setText("Duration: 00:00:00")
         
         # Create splitter for packet view
         packet_splitter = QSplitter(Qt.Vertical)
@@ -901,35 +1110,111 @@ class MainWindow(QMainWindow):
         self.scan_thread.start()
     
     def start_capture(self):
-        self.statusBar().showMessage("Capture en cours...")
-        # Simulation de capture de paquets
-        if self.packet_analyzer:
-            # Ajouter des paquets fictifs
-            test_data = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
-            self.packet_analyzer.add_packet(test_data)
-            self.display_packets()
-        self.statusBar().showMessage("Capture terminée")
+        if self.is_capturing:
+            return
+            
+        interface = self.interface_combo.currentText()
+        if not interface:
+            QMessageBox.warning(self, "Warning", "Please select a network interface first")
+            return
+            
+        self.is_capturing = True
+        self.capture_start_time = time.time()
+        
+        # Update UI
+        self.start_capture_btn.setEnabled(False)
+        self.stop_capture_btn.setEnabled(True)
+        self.quick_start_btn.setEnabled(False)
+        self.quick_stop_btn.setEnabled(True)
+        self.status_bar.showMessage(f"Capturing on interface: {interface}")
+        
+        # Get filter expression
+        filter_expr = self.current_filter
+        
+        # Start capture thread
+        self.capture_thread = PacketCaptureThread(interface, filter_expr)
+        self.capture_thread.packet_captured.connect(self.on_packet_captured)
+        self.capture_thread.capture_stopped.connect(self.on_capture_stopped)
+        self.capture_thread.start()
     
+    def start_scan(self):
+        self.status_bar.showMessage("Scanning WiFi networks...")
+        self.scan_progress.setVisible(True)
+        self.scan_button.setEnabled(False)
+        
+        self.scan_thread = WiFiScanThread()
+        self.scan_thread.scan_complete.connect(self.display_networks)
+        self.scan_thread.finished.connect(lambda: self.scan_progress.setVisible(False))
+        self.scan_thread.finished.connect(lambda: self.scan_button.setEnabled(True))
+        self.scan_thread.start()
+        
+    def stop_capture(self):
+        if not self.is_capturing:
+            return
+            
+        self.is_capturing = False
+        
+        if self.capture_thread:
+            self.capture_thread.stop_capture()
+            
+    def on_capture_stopped(self):
+        self.is_capturing = False
+        
+        # Update UI
+        self.start_capture_btn.setEnabled(True)
+        self.stop_capture_btn.setEnabled(False)
+        self.quick_start_btn.setEnabled(True)
+        self.quick_stop_btn.setEnabled(False)
+        self.status_bar.showMessage("Capture stopped")
+        
+    def on_packet_captured(self, packet_data):
+        if "error" in packet_data:
+            QMessageBox.warning(self, "Capture Error", packet_data["error"])
+            return
+            
+        self.captured_packets.append(packet_data)
+        self.packet_count += 1
+        
+        # Update packet table
+        self.add_packet_to_table(packet_data)
+        
+        # Update statistics
+        self.stats_widget.update_stats(packet_data)
+        
+        # Update real-time display
+        self.update_realtime_display()
+        
+    def add_packet_to_table(self, packet_data):
+        row = self.packet_table.rowCount()
+        self.packet_table.insertRow(row)
+        
+        # Add packet data to table
+        self.packet_table.setItem(row, 0, QTableWidgetItem(str(self.packet_count)))
+        self.packet_table.setItem(row, 1, QTableWidgetItem(packet_data["timestamp"]))
+        self.packet_table.setItem(row, 2, QTableWidgetItem(packet_data["src_ip"] or packet_data["src_mac"]))
+        self.packet_table.setItem(row, 3, QTableWidgetItem(packet_data["dst_ip"] or packet_data["dst_mac"]))
+        self.packet_table.setItem(row, 4, QTableWidgetItem(packet_data["protocol"]))
+        self.packet_table.setItem(row, 5, QTableWidgetItem(str(packet_data["size"])))
+        self.packet_table.setItem(row, 6, QTableWidgetItem(str(packet_data["port_src"])))
+        self.packet_table.setItem(row, 7, QTableWidgetItem(str(packet_data["port_dst"])))
+        
+        # Auto-scroll if enabled
+        if self.auto_scroll_check.isChecked():
+            self.packet_table.scrollToBottom()
+            
     def display_networks(self, networks):
-        # Afficher dans le tableau de bord
+        # Display in dashboard tab
         self.networks_table.setRowCount(len(networks))
         for row, network in enumerate(networks):
-            self.networks_table.setItem(row, 0, QTableWidgetItem(network['ssid']))
-            self.networks_table.setItem(row, 1, QTableWidgetItem(network['bssid']))
-            self.networks_table.setItem(row, 2, QTableWidgetItem(str(network['channel'])))
-            self.networks_table.setItem(row, 3, QTableWidgetItem(str(network['rssi'])))
-            self.networks_table.setItem(row, 4, QTableWidgetItem(network['encryption']))
-        
-        # Afficher dans l'onglet analyse
-        self.networks_list.setRowCount(len(networks))
-        for row, network in enumerate(networks):
-            self.networks_list.setItem(row, 0, QTableWidgetItem(network['ssid']))
-            self.networks_list.setItem(row, 1, QTableWidgetItem(network['bssid']))
-            self.networks_list.setItem(row, 2, QTableWidgetItem(str(network['channel'])))
-            self.networks_list.setItem(row, 3, QTableWidgetItem(str(network['rssi'])))
-            self.networks_list.setItem(row, 4, QTableWidgetItem(network['encryption']))
-        
-        self.statusBar().showMessage(f"{len(networks)} réseaux trouvés")
+            self.networks_table.setItem(row, 0, QTableWidgetItem(network.get('ssid', 'Hidden')))
+            self.networks_table.setItem(row, 1, QTableWidgetItem(network.get('bssid', '')))
+            self.networks_table.setItem(row, 2, QTableWidgetItem(str(network.get('channel', ''))))
+            self.networks_table.setItem(row, 3, QTableWidgetItem(str(network.get('rssi', ''))))
+            self.networks_table.setItem(row, 4, QTableWidgetItem(network.get('security', '')))
+            self.networks_table.setItem(row, 5, QTableWidgetItem(network.get('encryption', '')))
+            self.networks_table.setItem(row, 6, QTableWidgetItem(network.get('vendor', '')))
+            
+        self.status_bar.showMessage(f"Found {len(networks)} WiFi networks")
     
     def display_packets(self):
         if not self.packet_analyzer:
